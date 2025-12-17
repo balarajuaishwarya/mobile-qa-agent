@@ -1,169 +1,274 @@
 """
-Supervisor Agent - Evaluates test results and makes final decision
+Supervisor Agent - Using OpenRouter API
 """
-import google.generativeai as genai
 import os
-from dotenv import load_dotenv
+import time
 import json
+import base64
+from io import BytesIO
+from PIL import Image
+from dotenv import load_dotenv
+from openai import OpenAI
 
 load_dotenv()
 
 
 class SupervisorAgent:
-    def __init__(self):
-        api_key = os.getenv('GEMINI_API_KEY')
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+    def __init__(self, calls_per_minute=60):
+        """Initialize Supervisor with OpenRouter API"""
+        
+        api_key = os.getenv('OPENROUTER_API_KEY')
+        if not api_key:
+            raise ValueError("OPENROUTER_API_KEY not found in .env file")
+        
+        self.model = os.getenv('OPENROUTER_MODEL', 'google/gemini-flash-1.5-8b')
+        
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1"
+        )
+        
+        self.calls_per_minute = calls_per_minute
+        self.min_interval = 60.0 / calls_per_minute
+        self.last_call_time = 0
+        
+        print(f"✅ Supervisor initialized with OpenRouter")
+        print(f"   Model: {self.model}")
+        print(f"   Rate limit: {calls_per_minute} calls/min")
     
-    def should_continue(self, test_case, action_history, current_screenshot):
-        """
-        Decide if testing should continue or if we can make final evaluation
+    def _wait_for_rate_limit(self):
+        """Ensure we don't exceed rate limits"""
+        current_time = time.time()
+        time_since_last_call = current_time - self.last_call_time
         
-        Returns: dict
-        {
-            "continue": bool,
-            "reasoning": str
-        }
-        """
+        if time_since_last_call < self.min_interval:
+            wait_time = self.min_interval - time_since_last_call
+            print(f"   ⏳ Supervisor rate limit: waiting {wait_time:.1f}s...")
+            time.sleep(wait_time)
         
-        prompt = f"""
-You are a QA test supervisor. Decide if the test execution should continue or if it's ready for final evaluation.
+        self.last_call_time = time.time()
+    
+    def _encode_image_to_base64(self, pil_image):
+        """Convert PIL Image to base64 string"""
+        max_size = 2048
+        if max(pil_image.size) > max_size:
+            ratio = max_size / max(pil_image.size)
+            new_size = tuple(int(dim * ratio) for dim in pil_image.size)
+            pil_image = pil_image.resize(new_size, Image.LANCZOS)
+        
+        if pil_image.mode in ('RGBA', 'LA', 'P'):
+            rgb_image = Image.new('RGB', pil_image.size, (255, 255, 255))
+            if pil_image.mode == 'P':
+                pil_image = pil_image.convert('RGBA')
+            if 'A' in pil_image.mode:
+                rgb_image.paste(pil_image, mask=pil_image.split()[-1])
+            else:
+                rgb_image.paste(pil_image)
+            pil_image = rgb_image
+        
+        buffered = BytesIO()
+        pil_image.save(buffered, format="JPEG", quality=85)
+        img_bytes = buffered.getvalue()
+        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+        
+        return img_base64
+    
+    def should_continue(self, test_case, action_history, current_screenshot, max_retries=3):
+        """Decide if testing should continue"""
+        
+        system_prompt = """You are a QA test supervisor. Decide if test should continue.
 
-TEST CASE: {test_case}
-
-ACTION HISTORY:
-{json.dumps(action_history, indent=2)}
-
-Look at the current screenshot and action history.
-
-DECISION CRITERIA:
-- Continue if: More steps are needed to complete the test objective
-- Stop if: Test objective is achieved (ready to verify pass/fail)
-- Stop if: Stuck in a loop or unable to proceed after multiple attempts
-- Stop if: More than 15 actions have been taken
-
-Respond with ONLY a valid JSON object:
-{{
-    "continue": true/false,
+Respond with ONLY JSON:
+{
+    "continue": true or false,
     "reasoning": "brief explanation"
-}}
-"""
+}
+
+CRITERIA:
+- Continue: More steps needed for test objective
+- Stop: Objective achieved OR stuck OR 12+ actions taken"""
+
+        recent_history = action_history[-5:] if len(action_history) > 5 else action_history
+        user_prompt = f"""TEST: {test_case}
+
+ACTIONS: {len(action_history)} steps
+
+HISTORY:
+{json.dumps(recent_history, indent=2)}
+
+Continue or stop? ONLY JSON."""
+
+        base64_image = self._encode_image_to_base64(current_screenshot)
         
-        try:
-            response = self.model.generate_content([prompt, current_screenshot])
-            response_text = response.text.strip()
-            
-            # Clean up response
-            if response_text.startswith('```json'):
-                response_text = response_text[7:]
-            if response_text.startswith('```'):
-                response_text = response_text[3:]
-            if response_text.endswith('```'):
-                response_text = response_text[:-3]
-            
-            response_text = response_text.strip()
-            
-            decision = json.loads(response_text)
-            return decision
+        for attempt in range(max_retries):
+            try:
+                self._wait_for_rate_limit()
+                
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": user_prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{base64_image}"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    max_tokens=200,
+                    temperature=0.2,
+                    extra_headers={
+                        "HTTP-Referer": "https://github.com/mobile-qa-agent",
+                        "X-Title": "Mobile QA Agent"
+                    }
+                )
+                
+                response_text = response.choices[0].message.content.strip()
+                
+                if response_text.startswith('```json'):
+                    response_text = response_text[7:]
+                if response_text.startswith('```'):
+                    response_text = response_text[3:]
+                if response_text.endswith('```'):
+                    response_text = response_text[:-3]
+                
+                decision = json.loads(response_text.strip())
+                
+                if "continue" not in decision:
+                    decision["continue"] = len(action_history) < 12
+                if "reasoning" not in decision:
+                    decision["reasoning"] = "No reasoning"
+                
+                return decision
+                
+            except Exception as e:
+                print(f"   ❌ Decision error (attempt {attempt + 1}/{max_retries}): {e}")
+                
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                else:
+                    return {
+                        "continue": len(action_history) < 12,
+                        "reasoning": "Default due to error"
+                    }
         
-        except Exception as e:
-            print(f"Supervisor decision error: {e}")
-            # Default to stop after 15 actions
-            return {
-                "continue": len(action_history) < 15,
-                "reasoning": "Default decision due to error"
-            }
+        return {"continue": False, "reasoning": "Failed after retries"}
     
-    def evaluate_test_result(self, test_case, action_history, final_screenshot):
-        """
-        Make final evaluation: PASS or FAIL
+    def evaluate_test_result(self, test_case, action_history, final_screenshot, max_retries=3):
+        """Final evaluation: PASS or FAIL"""
         
-        Returns: dict
-        {
-            "result": "PASS" or "FAIL",
-            "reason": str,
-            "bug_found": bool,
-            "details": str
-        }
-        """
-        
-        prompt = f"""
-You are a QA test supervisor. Evaluate whether this test PASSED or FAILED.
+        system_prompt = """You are a QA supervisor. Evaluate test result.
 
-TEST CASE: {test_case}
+Respond with ONLY JSON:
+{
+    "result": "PASS" or "FAIL",
+    "reason": "brief explanation",
+    "bug_found": true or false,
+    "details": "detailed explanation"
+}
 
-COMPLETE ACTION HISTORY:
+RULES:
+- PASS: All objectives completed
+- FAIL: Objective not completed or element not found
+- bug_found: true if expected feature genuinely missing"""
+
+        user_prompt = f"""TEST: {test_case}
+
+HISTORY:
 {json.dumps(action_history, indent=2)}
 
-Look at the final screenshot and action history.
+Evaluate. ONLY JSON."""
 
-EVALUATION RULES:
-1. Test PASSES if:
-   - All test objectives were successfully completed
-   - All verifications passed
-   - No errors or missing elements when they should exist
-
-2. Test FAILS if:
-   - Test objective could not be completed
-   - An expected element was not found
-   - A verification failed (wrong text, wrong color, missing feature)
-   - An error occurred that prevented completion
-
-IMPORTANT DISTINCTIONS:
-- "Failed step" (technical issue like couldn't click) vs "Failed assertion" (bug found)
-- If an element genuinely doesn't exist as expected → Test FAILS (bug found)
-- If we just had trouble finding it but it exists → Test PASSES
-
-Respond with ONLY a valid JSON object:
-{{
-    "result": "PASS" or "FAIL",
-    "reason": "brief explanation of why",
-    "bug_found": true/false,
-    "details": "detailed explanation with evidence from actions"
-}}
-"""
+        base64_image = self._encode_image_to_base64(final_screenshot)
         
-        try:
-            response = self.model.generate_content([prompt, final_screenshot])
-            response_text = response.text.strip()
-            
-            # Clean up response
-            if response_text.startswith('```json'):
-                response_text = response_text[7:]
-            if response_text.startswith('```'):
-                response_text = response_text[3:]
-            if response_text.endswith('```'):
-                response_text = response_text[:-3]
-            
-            response_text = response_text.strip()
-            
-            evaluation = json.loads(response_text)
-            
-            # Validate response
-            if "result" not in evaluation:
-                evaluation["result"] = "FAIL"
-            if evaluation["result"] not in ["PASS", "FAIL"]:
-                evaluation["result"] = "FAIL"
-            
-            return evaluation
+        for attempt in range(max_retries):
+            try:
+                self._wait_for_rate_limit()
+                
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": user_prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{base64_image}"
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    max_tokens=600,
+                    temperature=0.2,
+                    extra_headers={
+                        "HTTP-Referer": "https://github.com/mobile-qa-agent",
+                        "X-Title": "Mobile QA Agent"
+                    }
+                )
+                
+                response_text = response.choices[0].message.content.strip()
+                
+                if response_text.startswith('```json'):
+                    response_text = response_text[7:]
+                if response_text.startswith('```'):
+                    response_text = response_text[3:]
+                if response_text.endswith('```'):
+                    response_text = response_text[:-3]
+                
+                evaluation = json.loads(response_text.strip())
+                
+                if "result" not in evaluation or evaluation["result"] not in ["PASS", "FAIL"]:
+                    evaluation["result"] = "FAIL"
+                if "reason" not in evaluation:
+                    evaluation["reason"] = "No reason"
+                if "bug_found" not in evaluation:
+                    evaluation["bug_found"] = False
+                if "details" not in evaluation:
+                    evaluation["details"] = "No details"
+                
+                return evaluation
+                
+            except Exception as e:
+                print(f"   ❌ Evaluation error (attempt {attempt + 1}/{max_retries}): {e}")
+                
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                else:
+                    return {
+                        "result": "FAIL",
+                        "reason": "Evaluation failed",
+                        "bug_found": False,
+                        "details": f"Error: {str(e)}"
+                    }
         
-        except Exception as e:
-            print(f"Supervisor evaluation error: {e}")
-            return {
-                "result": "FAIL",
-                "reason": "Evaluation error",
-                "bug_found": False,
-                "details": f"Error during evaluation: {str(e)}"
-            }
+        return {
+            "result": "FAIL",
+            "reason": "Failed after retries",
+            "bug_found": False,
+            "details": "Evaluation failed"
+        }
     
     def format_test_report(self, test_case, evaluation, action_count):
-        """Format a nice test report"""
-
-        bug_status = "BUG FOUND" if evaluation.get("bug_found", False) else "NO BUG"
+        """Format test report"""
+        
+        result_emoji = "✅" if evaluation["result"] == "PASS" else "❌"
+        bug_status = "🐛 BUG FOUND" if evaluation.get("bug_found", False) else "✨ NO BUG"
         
         report = f"""
 {'='*70}
-TEST RESULT: {evaluation['result']}
+{result_emoji} TEST RESULT: {evaluation['result']}
 {'='*70}
 
 TEST CASE:

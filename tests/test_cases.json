@@ -1,0 +1,30 @@
+[
+  {
+    "id": "test_1",
+    "name": "Create Vault Test",
+    "description": "Open Obsidian, create a new Vault named 'InternVault', and enter the vault.",
+    "expected_result": "pass",
+    "category": "vault_management"
+  },
+  {
+    "id": "test_2",
+    "name": "Create Note Test",
+    "description": "Create a new note titled 'Meeting Notes' and type the text 'Daily Standup' into the body.",
+    "expected_result": "pass",
+    "category": "note_creation"
+  },
+  {
+    "id": "test_3",
+    "name": "Appearance Icon Color Test",
+    "description": "Go to Settings and verify that the 'Appearance' tab icon is the color Red.",
+    "expected_result": "fail",
+    "category": "ui_verification"
+  },
+  {
+    "id": "test_4",
+    "name": "Print to PDF Test",
+    "description": "Find and click the 'Print to PDF' button in the main file menu.",
+    "expected_result": "fail",
+    "category": "feature_availability"
+  }
+]

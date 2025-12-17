@@ -13,6 +13,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tools.adb import ADBTools
 from tools.vision import VisionTools
+from config import settings
+import shutil
+from datetime import timedelta
 from agents.supervisor import SupervisorAgent
 from agents.planner import PlannerAgent
 from agents.executor import ExecutorAgent
@@ -47,8 +50,28 @@ class TestOrchestrator:
         action_history = []
         step_count = 0
         
+        # Cleanup old screenshot directories according to settings
+        try:
+            retention = settings.SCREENSHOT_RETENTION_DAYS
+        except Exception:
+            retention = None
+
+        if retention and retention > 0:
+            cutoff = datetime.now() - timedelta(days=retention)
+            screenshots_root = os.path.abspath(settings.SCREENSHOT_DIR)
+            if os.path.isdir(screenshots_root):
+                for name in os.listdir(screenshots_root):
+                    path = os.path.join(screenshots_root, name)
+                    try:
+                        mtime = datetime.fromtimestamp(os.path.getmtime(path))
+                        if mtime < cutoff and os.path.isdir(path):
+                            print(f"🧹 Removing old screenshot directory: {path}")
+                            shutil.rmtree(path)
+                    except Exception:
+                        continue
+
         # Create screenshot directory for this test
-        test_screenshot_dir = f"screenshots/{test_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        test_screenshot_dir = os.path.join(settings.SCREENSHOT_DIR, f"{test_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
         os.makedirs(test_screenshot_dir, exist_ok=True)
         
         # Launch Obsidian app
@@ -62,9 +85,13 @@ class TestOrchestrator:
             
             print(f"\n--- Step {step_count} ---")
             
-            # Take screenshot
-            screenshot_path = f"{test_screenshot_dir}/step_{step_count:02d}.png"
-            screenshot = self.adb.get_screenshot(screenshot_path)
+            # Take screenshot (optionally save per-step based on settings)
+            if getattr(settings, 'SAVE_STEP_SCREENSHOTS', False):
+                screenshot_path = os.path.join(test_screenshot_dir, f"step_{step_count:02d}.png")
+                screenshot = self.adb.get_screenshot(screenshot_path)
+            else:
+                screenshot_path = None
+                screenshot = self.adb.get_screenshot()
             
             if screenshot is None:
                 print("❌ Failed to take screenshot")
@@ -124,7 +151,7 @@ class TestOrchestrator:
         
         # Final evaluation
         print(f"\n🎬 Test execution complete. Taking final screenshot...")
-        final_screenshot_path = f"{test_screenshot_dir}/final.png"
+        final_screenshot_path = os.path.join(test_screenshot_dir, 'final.png')
         final_screenshot = self.adb.get_screenshot(final_screenshot_path)
         
         print(f"⚖️  Supervisor: Evaluating test results...")
