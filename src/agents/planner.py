@@ -5,32 +5,28 @@ import base64
 from io import BytesIO
 from PIL import Image
 from dotenv import load_dotenv
-from openai import OpenAI
+
+from tools.ai_provider import AIProviderManager
 
 load_dotenv()
 
 
 class PlannerAgent:
     def __init__(self, calls_per_minute=60):
-        """Initialize Planner with OpenRouter API"""
-        
-        api_key = os.getenv('OPENROUTER_API_KEY')
-        if not api_key:
-            raise ValueError("OPENROUTER_API_KEY not found in .env file")
-        
-        self.model = os.getenv('OPENROUTER_MODEL', 'google/gemini-flash-1.5-8b')
-        
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
-        )
+        """Initialize Planner and AI provider manager."""
+
+        # Use the central AIProviderManager (prefers OpenAI when configured)
+        self.provider = AIProviderManager()
+
+        # Keep model config for informational/debug uses; provider manages actual model selection
+        self.model = os.getenv('OPENROUTER_MODEL') or os.getenv('OPENAI_MODEL')
         
         # Rate limiting
         self.calls_per_minute = calls_per_minute
         self.min_interval = 60.0 / calls_per_minute
         self.last_call_time = 0
         
-        print(f"✅ Planner initialized with OpenRouter")
+        print(f"Planner initialized with OpenRouter")
         print(f"   Model: {self.model}")
         print(f"   Rate limit: {calls_per_minute} calls/min")
     
@@ -41,7 +37,7 @@ class PlannerAgent:
         
         if time_since_last_call < self.min_interval:
             wait_time = self.min_interval - time_since_last_call
-            print(f"   ⏳ Planner rate limit: waiting {wait_time:.1f}s...")
+            print(f"   Planner rate limit: waiting {wait_time:.1f}s...")
             time.sleep(wait_time)
         
         self.last_call_time = time.time()
@@ -108,36 +104,16 @@ Decide the NEXT action. Respond with ONLY JSON."""
 
         base64_image = self._encode_image_to_base64(screenshot)
         
+        base64_image = self._encode_image_to_base64(screenshot)
+
+        # Build a single text prompt (system + user) and include the image as a data URL
+        full_prompt = system_prompt + "\n\n" + user_prompt + "\n\nImage: data:image/jpeg;base64," + base64_image
+
         for attempt in range(max_retries):
             try:
                 self._wait_for_rate_limit()
-                
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": user_prompt},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{base64_image}"
-                                    }
-                                }
-                            ]
-                        }
-                    ],
-                    max_tokens=500,
-                    temperature=0.3,
-                    extra_headers={
-                        "HTTP-Referer": "https://github.com/mobile-qa-agent",
-                        "X-Title": "Mobile QA Agent"
-                    }
-                )
-                
-                response_text = response.choices[0].message.content.strip()
+                resp = self.provider.generate_content(full_prompt, image=None, max_tokens=500, temperature=0.3)
+                response_text = resp.text.strip() if resp and hasattr(resp, 'text') else ''
                 
                 # Clean response
                 if response_text.startswith('```json'):
@@ -163,7 +139,7 @@ Decide the NEXT action. Respond with ONLY JSON."""
                 return action
                 
             except json.JSONDecodeError as e:
-                print(f"   ❌ JSON parse error (attempt {attempt + 1}/{max_retries})")
+                print(f"   JSON parse error (attempt {attempt + 1}/{max_retries})")
                 print(f"   Response: {response_text[:300]}...")
                 
                 if attempt < max_retries - 1:
@@ -182,7 +158,7 @@ Decide the NEXT action. Respond with ONLY JSON."""
                 if '429' in error_msg or 'rate_limit' in error_msg:
                     if attempt < max_retries - 1:
                         wait_time = 15 * (2 ** attempt)
-                        print(f"   ⚠️  Rate limit (attempt {attempt + 1}/{max_retries})")
+                        print(f"   Rate limit (attempt {attempt + 1}/{max_retries})")
                         print(f"   Waiting {wait_time}s...")
                         time.sleep(wait_time)
                         continue
@@ -193,7 +169,7 @@ Decide the NEXT action. Respond with ONLY JSON."""
                             "reasoning": "Rate limit exceeded"
                         }
                 else:
-                    print(f"   ❌ Error: {e}")
+                    print(f"Error: {e}")
                     
                     if attempt < max_retries - 1:
                         time.sleep(3)

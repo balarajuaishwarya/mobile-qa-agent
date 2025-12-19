@@ -34,7 +34,7 @@ After evaluating multiple agentic frameworks for mobile QA automation, I chose t
 - **Cons**: 
   - No built-in state management (handled manually)
   - No automatic retries or error handling (implemented custom)
-- **Verdict**: ✅ Best fit for this project
+- **Verdict**: Best fit for this project
 
 ---
 
@@ -44,7 +44,7 @@ After evaluating multiple agentic frameworks for mobile QA automation, I chose t
 
 1. **Simplicity**: The supervisor-planner-executor pattern is inherently sequential. We don't need complex graph-based routing or parallel agent execution.
 
-2. **Vision-First Approach**: Mobile QA fundamentally requires understanding screenshots. Gemini 2.0 Flash excels at vision tasks and is free to use.
+2. **Vision-First Approach**: Mobile QA fundamentally requires understanding screenshots. Gemini 2.0 Flash excels at vision tasks and is free to use (though has heavy rate limitor for the free tier).
 
 3. **Prompt Engineering Control**: Custom implementation gives us full control over agent prompts, which is critical for:
    - Planner: Generating precise action coordinates
@@ -52,8 +52,8 @@ After evaluating multiple agentic frameworks for mobile QA automation, I chose t
    - Executor: Handling edge cases gracefully
 
 4. **Modularity**: Clean separation between:
-   - `adb_tools.py`: Android device control
-   - `vision_tools.py`: Vision API wrappers
+   - `adb.py`: Android device control
+   - `vision.py`: Vision API wrappers
    - Agent classes: Pure business logic
    - `main.py`: Orchestration
 
@@ -62,36 +62,6 @@ After evaluating multiple agentic frameworks for mobile QA automation, I chose t
 ---
 
 ## Implementation Architecture
-
-```
-┌─────────────────┐
-│   Test Case     │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   SUPERVISOR    │ ◄──── Decides: Continue or Evaluate?
-└────────┬────────┘
-         │ Continue
-         ▼
-┌─────────────────┐
-│    PLANNER      │ ◄──── Screenshot + Test Goal → Next Action
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   EXECUTOR      │ ◄──── Executes Action via ADB
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Screenshot    │
-└────────┬────────┘
-         │
-         └──────► Back to Supervisor (loop)
-```
-
-### Agent Responsibilities
 
 **Supervisor**:
 - Receives: Test case, action history, current screenshot
@@ -129,43 +99,47 @@ After evaluating multiple agentic frameworks for mobile QA automation, I chose t
 - Distinguish "technical failure" (couldn't click) from "test failure" (element missing)
 - Supervisor makes final determination based on context
 - All actions logged with screenshots for debugging
+# Framework Decision Memo
 
-### 4. **Verification Approach**
-- Use Gemini Vision for all visual assertions
-- Verify text presence, element existence, color matching
-- Supervisor evaluates verification results in context
+## Selected Approach: Custom Multi-Agent System with a provider-agnostic Vision layer
 
----
-
-## Trade-offs Accepted
-
-1. **No Built-in State Management**: Managed manually via `action_history` dict
-   - Simple enough for this use case
-   - Easy to debug
-
-2. **Sequential Execution Only**: No parallel test execution
-   - Sufficient for demo purposes
-   - Can be extended if needed
-
-3. **Manual Prompt Engineering**: No automatic prompt optimization
-   - Allows fine-grained control
-   - Prompts can be iteratively improved
+### Executive Summary
+Implemented a custom multi-agent orchestration system tailored for mobile QA automation. The implementation uses a small AI provider abstraction (`AIProviderManager`) so the system can work with any model i.e can be switched to other providers later. 
 
 ---
 
-## Success Criteria Met
+## Action Types
 
-✅ **Accurate Reporting**: Supervisor distinguishes between execution failures and bugs  
-✅ **Reasoning Loop**: Clear separation of concerns across agents  
-✅ **Prompt Engineering**: Three distinct, effective agent prompts  
-✅ **Code Quality**: Modular design, easy model swapping  
+- tap: click at percentage coordinates
+- type: input text
+- press_key: system keys (back, home, enter)
+- swipe: gestures with start/end percentages
+- wait: pause for N seconds
+- complete: end the test
+
+---
+
+## Error Handling & Verification
+
+- Execution errors (ADB failures) are distinguished from test failures (element missing). Supervisor makes the final judgment.
+- Visual verification (text, element, color) is performed by VisionTools via the provider.
+
+---
+
+## Trade-offs
+
+- Pros: simple, debuggable, minimal dependencies, easy to swap models/providers.
+- Cons: sequential only (no built-in parallelism), manual state management, and prompt engineering done by hand.
+
+---
+
+## Dependencies & LOC
+
+- Dependencies: `openai`, `pillow`, `python-dotenv` (plus standard testing/dev tools)
+- Total LOC: ~800 (approx)
 
 ---
 
 ## Conclusion
 
-The custom implementation with Gemini Vision API provides the optimal balance of simplicity, flexibility, and capability for this mobile QA automation challenge. It demonstrates understanding of agentic patterns while remaining practical and maintainable.
-
-**Total LOC**: ~800 lines  
-**Dependencies**: 3 core packages (google-generativeai, pillow, python-dotenv)  
-**Estimated Development Time**: 6-8 hours
+The custom multi-agent approach implemented in this repo is intentionally lightweight and provider-agnostic. It focuses on clarity, debuggability, and easy substitution of the underlying AI provider.  This matches the code in the repository and avoids adding unused frameworks or unnecessary complexity.

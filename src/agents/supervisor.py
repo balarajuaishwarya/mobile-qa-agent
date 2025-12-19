@@ -8,31 +8,26 @@ import base64
 from io import BytesIO
 from PIL import Image
 from dotenv import load_dotenv
-from openai import OpenAI
+
+from tools.ai_provider import AIProviderManager
 
 load_dotenv()
 
 
 class SupervisorAgent:
     def __init__(self, calls_per_minute=60):
-        """Initialize Supervisor with OpenRouter API"""
-        
-        api_key = os.getenv('OPENROUTER_API_KEY')
-        if not api_key:
-            raise ValueError("OPENROUTER_API_KEY not found in .env file")
-        
-        self.model = os.getenv('OPENROUTER_MODEL', 'google/gemini-flash-1.5-8b')
-        
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
-        )
-        
+        """Initialize Supervisor and AI provider manager."""
+
+        # Use central provider manager (prefers OpenAI when configured)
+        self.provider = AIProviderManager()
+
+        # Keep model setting for diagnostics; provider will use configured model
+        self.model = os.getenv('OPENROUTER_MODEL') or os.getenv('OPENAI_MODEL')
+
         self.calls_per_minute = calls_per_minute
         self.min_interval = 60.0 / calls_per_minute
         self.last_call_time = 0
-        
-        print(f"✅ Supervisor initialized with OpenRouter")
+        print(f"Supervisor initialized with OpenRouter")
         print(f"   Model: {self.model}")
         print(f"   Rate limit: {calls_per_minute} calls/min")
     
@@ -40,10 +35,9 @@ class SupervisorAgent:
         """Ensure we don't exceed rate limits"""
         current_time = time.time()
         time_since_last_call = current_time - self.last_call_time
-        
         if time_since_last_call < self.min_interval:
             wait_time = self.min_interval - time_since_last_call
-            print(f"   ⏳ Supervisor rate limit: waiting {wait_time:.1f}s...")
+            print(f"   Supervisor rate limit: waiting {wait_time:.1f}s...")
             time.sleep(wait_time)
         
         self.last_call_time = time.time()
@@ -99,45 +93,24 @@ HISTORY:
 Continue or stop? ONLY JSON."""
 
         base64_image = self._encode_image_to_base64(current_screenshot)
-        
+
+        # Build full text prompt including the image as a data URL
+        full_prompt = system_prompt + "\n\n" + user_prompt + "\n\nImage: data:image/jpeg;base64," + base64_image
+
         for attempt in range(max_retries):
             try:
                 self._wait_for_rate_limit()
-                
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": user_prompt},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{base64_image}"
-                                    }
-                                }
-                            ]
-                        }
-                    ],
-                    max_tokens=200,
-                    temperature=0.2,
-                    extra_headers={
-                        "HTTP-Referer": "https://github.com/mobile-qa-agent",
-                        "X-Title": "Mobile QA Agent"
-                    }
-                )
-                
-                response_text = response.choices[0].message.content.strip()
-                
+
+                resp = self.provider.generate_content(full_prompt, image=None, max_tokens=200, temperature=0.2)
+                response_text = resp.text.strip() if resp and hasattr(resp, 'text') else ''
+
                 if response_text.startswith('```json'):
                     response_text = response_text[7:]
                 if response_text.startswith('```'):
                     response_text = response_text[3:]
                 if response_text.endswith('```'):
                     response_text = response_text[:-3]
-                
+
                 decision = json.loads(response_text.strip())
                 
                 if "continue" not in decision:
@@ -148,7 +121,7 @@ Continue or stop? ONLY JSON."""
                 return decision
                 
             except Exception as e:
-                print(f"   ❌ Decision error (attempt {attempt + 1}/{max_retries}): {e}")
+                print(f"Decision error (attempt {attempt + 1}/{max_retries}): {e}")
                 
                 if attempt < max_retries - 1:
                     time.sleep(2)
@@ -187,45 +160,23 @@ HISTORY:
 Evaluate. ONLY JSON."""
 
         base64_image = self._encode_image_to_base64(final_screenshot)
-        
+
+        full_prompt = system_prompt + "\n\n" + user_prompt + "\n\nImage: data:image/jpeg;base64," + base64_image
+
         for attempt in range(max_retries):
             try:
                 self._wait_for_rate_limit()
-                
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": user_prompt},
-                                {
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": f"data:image/jpeg;base64,{base64_image}"
-                                    }
-                                }
-                            ]
-                        }
-                    ],
-                    max_tokens=600,
-                    temperature=0.2,
-                    extra_headers={
-                        "HTTP-Referer": "https://github.com/mobile-qa-agent",
-                        "X-Title": "Mobile QA Agent"
-                    }
-                )
-                
-                response_text = response.choices[0].message.content.strip()
-                
+
+                resp = self.provider.generate_content(full_prompt, image=None, max_tokens=600, temperature=0.2)
+                response_text = resp.text.strip() if resp and hasattr(resp, 'text') else ''
+
                 if response_text.startswith('```json'):
                     response_text = response_text[7:]
                 if response_text.startswith('```'):
                     response_text = response_text[3:]
                 if response_text.endswith('```'):
                     response_text = response_text[:-3]
-                
+
                 evaluation = json.loads(response_text.strip())
                 
                 if "result" not in evaluation or evaluation["result"] not in ["PASS", "FAIL"]:
@@ -240,7 +191,7 @@ Evaluate. ONLY JSON."""
                 return evaluation
                 
             except Exception as e:
-                print(f"   ❌ Evaluation error (attempt {attempt + 1}/{max_retries}): {e}")
+                print(f"Evaluation error (attempt {attempt + 1}/{max_retries}): {e}")
                 
                 if attempt < max_retries - 1:
                     time.sleep(2)
@@ -262,13 +213,12 @@ Evaluate. ONLY JSON."""
     
     def format_test_report(self, test_case, evaluation, action_count):
         """Format test report"""
-        
-        result_emoji = "✅" if evaluation["result"] == "PASS" else "❌"
-        bug_status = "🐛 BUG FOUND" if evaluation.get("bug_found", False) else "✨ NO BUG"
+
+        bug_status = "BUG FOUND" if evaluation.get("bug_found", False) else "NO BUG"
         
         report = f"""
 {'='*70}
-{result_emoji} TEST RESULT: {evaluation['result']}
+TEST RESULT: {evaluation['result']}
 {'='*70}
 
 TEST CASE:

@@ -26,7 +26,7 @@ class ExecutorAgent:
         action_type = action.get("action_type")
         parameters = action.get("parameters", {})
         
-        print(f"\n🔧 EXECUTOR: Executing {action_type}")
+        print(f"\nEXECUTOR: Executing {action_type}")
         print(f"   Parameters: {parameters}")
         print(f"   Reasoning: {action.get('reasoning', 'N/A')}")
         
