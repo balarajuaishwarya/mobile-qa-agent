@@ -1,50 +1,112 @@
 """
-Simple AI provider manager (OpenAI primary, mock fallback)
+AI provider manager using OpenRouter with Google Gemini models only.
+
 """
+
 import os
+import base64
+from typing import Optional
 
 try:
-    import openai
+    from openai import OpenAI
 except Exception:
-    openai = None
+    OpenAI = None
 
 
 class ProviderResponse:
-    def __init__(self, text):
+    def __init__(self, text: str):
         self.text = text
 
 
 class AIProviderManager:
-    def __init__(self, chain=None):
-        # chain is unused for now; keep for compatibility
-        self.chain = chain or os.getenv('MODEL_PROVIDER_CHAIN', 'openai')
-        self.openai_api_key = os.getenv('OPENAI_API_KEY')
-        if openai and self.openai_api_key:
-            openai.api_key = self.openai_api_key
+    def __init__(self):
+        if not OpenAI:
+            raise RuntimeError("openai package is not installed")
 
-    def generate_content(self, prompt, image=None, max_tokens=1024, temperature=0.2):
-        """Return ProviderResponse with .text containing model output."""
-        # Prefer OpenAI if SDK available and API key present
-        if openai and self.openai_api_key:
-            try:
-                resp = openai.ChatCompletion.create(
-                    model=os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
-                    messages=[{'role': 'user', 'content': prompt}],
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-                # Extract text
-                content = ''
-                if resp and 'choices' in resp and len(resp.choices) > 0:
-                    content = resp.choices[0].message.get('content') if hasattr(resp.choices[0], 'message') else resp.choices[0].get('message', {}).get('content', '')
-                    if not content:
-                        # Older openai versions
-                        content = resp.choices[0].get('text', '')
-                return ProviderResponse(content or '')
-            except Exception as e:
-                # fallback to mock
-                return ProviderResponse(f"MOCK_RESPONSE: OpenAI call failed: {e}")
+        self.api_key = os.getenv("OPENROUTER_API_KEY")
+        self.model = os.getenv("OPENROUTER_MODEL")
 
-        # Mock response when no provider configured
-        excerpt = prompt[:200].replace('\n', ' ')
-        return ProviderResponse(f"MOCK_RESPONSE: No provider available. Prompt excerpt: {excerpt}")
+        if not self.api_key:
+            raise ValueError("OPENROUTER_API_KEY is not set")
+
+        if not self.model:
+            raise ValueError(
+                "OPENROUTER_MODEL must be set (e.g., google/gemini-2.0-flash)"
+            )
+
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+    def _encode_image(self, image) -> Optional[str]:
+        """Accept bytes or PIL.Image and return base64 JPEG string."""
+        try:
+            from PIL import Image
+            from io import BytesIO
+        except Exception:
+            Image = None
+
+        if isinstance(image, (bytes, bytearray)):
+            return base64.b64encode(image).decode("utf-8")
+
+        if Image and isinstance(image, Image.Image):
+            buf = BytesIO()
+            image.save(buf, format="JPEG", quality=85)
+            return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+        return None
+
+    def _build_messages(self, prompt: str, image=None):
+        """Build OpenAI-compatible messages with optional image."""
+        if image is None:
+            return [{"role": "user", "content": prompt}]
+
+        img_b64 = self._encode_image(image)
+        if not img_b64:
+            return [{"role": "user", "content": prompt}]
+
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{img_b64}"
+                        },
+                    },
+                ],
+            }
+        ]
+
+    def _extract_text(self, response) -> str:
+        """Safely extract text from OpenRouter response."""
+        try:
+            return response.choices[0].message.content or ""
+        except Exception:
+            return ""
+
+    def generate_content(
+        self,
+        prompt: str,
+        image=None,
+        max_tokens: int = 1024,
+        temperature: float = 0.2,
+    ) -> ProviderResponse:
+        messages = self._build_messages(prompt, image)
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            return ProviderResponse(self._extract_text(response))
+
+        except Exception as e:
+            return ProviderResponse(
+                f"MOCK_RESPONSE: OpenRouter Gemini call failed: {e}"
+            )

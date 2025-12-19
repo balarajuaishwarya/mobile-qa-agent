@@ -17,10 +17,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from tools.adb import ADBTools
 from tools.vision import VisionTools
-from config import settings
 from agents.supervisor import SupervisorAgent
 from agents.planner import PlannerAgent
 from agents.executor import ExecutorAgent
+
+# Read runtime flags from environment (avoid requiring a `settings` module)
+SAVE_STEP_SCREENSHOTS = os.getenv('SAVE_STEP_SCREENSHOTS', 'False').lower() in ('1', 'true', 'yes')
+try:
+    SCREENSHOT_RETENTION_DAYS = int(os.getenv('SCREENSHOT_RETENTION_DAYS', '7'))
+except Exception:
+    SCREENSHOT_RETENTION_DAYS = None
 
 
 class TestOrchestrator:
@@ -52,15 +58,12 @@ class TestOrchestrator:
         action_history = []
         step_count = 0
 
-        # Cleanup old screenshot directories according to settings
-        try:
-            retention = settings.SCREENSHOT_RETENTION_DAYS
-        except Exception:
-            retention = None
+        # Cleanup old screenshot directories according to environment flag
+        retention = SCREENSHOT_RETENTION_DAYS
 
         if retention and retention > 0:
             cutoff = datetime.now() - timedelta(days=retention)
-            screenshots_root = os.path.abspath(settings.SCREENSHOT_DIR)
+            screenshots_root = os.path.abspath('screenshots')
             if os.path.isdir(screenshots_root):
                 for name in os.listdir(screenshots_root):
                     path = os.path.join(screenshots_root, name)
@@ -74,7 +77,7 @@ class TestOrchestrator:
 
         # Create screenshot directory for this test
         test_screenshot_dir = os.path.join(
-            settings.SCREENSHOT_DIR,
+            'screenshots',
             f"{test_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
         os.makedirs(test_screenshot_dir, exist_ok=True)
@@ -90,8 +93,8 @@ class TestOrchestrator:
 
             print(f"\n--- Step {step_count} ---")
 
-            # Take screenshot (optionally save per-step based on settings)
-            if getattr(settings, 'SAVE_STEP_SCREENSHOTS', False):
+            # Take screenshot (optionally save per-step based on environment flag)
+            if SAVE_STEP_SCREENSHOTS:
                 screenshot_path = os.path.join(test_screenshot_dir, f"step_{step_count:02d}.png")
                 screenshot = self.adb.get_screenshot(screenshot_path)
             else:
