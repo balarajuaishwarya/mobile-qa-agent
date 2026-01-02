@@ -1,112 +1,140 @@
-"""
-AI provider manager using OpenRouter with Google Gemini models only.
-
-"""
-
+"""AI Provider - OpenRouter with robust rate limiting"""
 import os
+import json
+import time
 import base64
-from typing import Optional
+import io
+import requests
+from PIL import Image
+from dotenv import load_dotenv
 
-try:
-    from openai import OpenAI
-except Exception:
-    OpenAI = None
-
-
-class ProviderResponse:
-    def __init__(self, text: str):
-        self.text = text
+load_dotenv()
 
 
-class AIProviderManager:
+class AIProvider:
     def __init__(self):
-        if not OpenAI:
-            raise RuntimeError("openai package is not installed")
-
         self.api_key = os.getenv("OPENROUTER_API_KEY")
-        self.model = os.getenv("OPENROUTER_MODEL")
-
         if not self.api_key:
-            raise ValueError("OPENROUTER_API_KEY is not set")
+            raise ValueError(" OPENROUTER_API_KEY missing in .env")
 
-        if not self.model:
-            raise ValueError(
-                "OPENROUTER_MODEL must be set (e.g., google/gemini-2.0-flash)"
-            )
+        self.model = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+        self.url = "https://openrouter.ai/api/v1/chat/completions"
+        
+        # RATE LIMITING: Conservative for demo reliability
+        self.last_call_time = 0
+        self.min_delay = 2.5  # 24 calls/min max (safe for any tier)
+        self.call_count = 0
 
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url="https://openrouter.ai/api/v1",
-        )
+        print(" AIProvider initialized (OpenRouter)")
+        print(f"   Model: {self.model}")
+        print(f"   Rate: {60/self.min_delay:.1f} calls/min (conservative)")
 
-    def _encode_image(self, image) -> Optional[str]:
-        """Accept bytes or PIL.Image and return base64 JPEG string."""
-        try:
-            from PIL import Image
-            from io import BytesIO
-        except Exception:
-            Image = None
+    def _rate_limit(self):
+        """Enforce rate limiting"""
+        elapsed = time.time() - self.last_call_time
+        if elapsed < self.min_delay:
+            wait = self.min_delay - elapsed
+            print(f"   ⏳ Rate limit: waiting {wait:.1f}s...")
+            time.sleep(wait)
 
-        if isinstance(image, (bytes, bytearray)):
-            return base64.b64encode(image).decode("utf-8")
+    def _encode_image(self, pil_image):
+        """Convert PIL image to base64 JPEG (FIXED for RGBA)"""
+        # Convert RGBA/P to RGB
+        if pil_image.mode in ('RGBA', 'LA', 'P'):
+            rgb = Image.new('RGB', pil_image.size, (255, 255, 255))
+            if pil_image.mode == 'P':
+                pil_image = pil_image.convert('RGBA')
+            if 'A' in pil_image.mode:
+                rgb.paste(pil_image, mask=pil_image.split()[-1])
+            else:
+                rgb.paste(pil_image)
+            pil_image = rgb
+        
+        # Resize if too large
+        max_size = 2048
+        if max(pil_image.size) > max_size:
+            ratio = max_size / max(pil_image.size)
+            new_size = tuple(int(dim * ratio) for dim in pil_image.size)
+            pil_image = pil_image.resize(new_size, Image.LANCZOS)
+        
+        buffer = io.BytesIO()
+        pil_image.save(buffer, format="JPEG", quality=85)
+        return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-        if Image and isinstance(image, Image.Image):
-            buf = BytesIO()
-            image.save(buf, format="JPEG", quality=85)
-            return base64.b64encode(buf.getvalue()).decode("utf-8")
-
-        return None
-
-    def _build_messages(self, prompt: str, image=None):
-        """Build OpenAI-compatible messages with optional image."""
-        if image is None:
-            return [{"role": "user", "content": prompt}]
-
-        img_b64 = self._encode_image(image)
-        if not img_b64:
-            return [{"role": "user", "content": prompt}]
-
-        return [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
+    def generate_response(self, prompt, image=None, max_retries=3):
+        """Generate response with retry logic"""
+        
+        for attempt in range(max_retries):
+            try:
+                self._rate_limit()
+                
+                # Build messages
+                content = [{"type": "text", "text": prompt}]
+                
+                if image:
+                    image_b64 = self._encode_image(image)
+                    content.append({
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{img_b64}"
-                        },
-                    },
-                ],
-            }
-        ]
+                        "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}
+                    })
+                
+                payload = {
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": content}],
+                    "max_tokens": 600,
+                    "temperature": 0.3
+                }
+                
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://github.com/mobile-qa-agent",
+                    "X-Title": "Mobile QA Agent"
+                }
+                
+                response = requests.post(self.url, headers=headers, json=payload, timeout=30)
+                self.last_call_time = time.time()
+                self.call_count += 1
+                
+                # Handle errors
+                if response.status_code == 429:
+                    if attempt < max_retries - 1:
+                        wait = 10 * (2 ** attempt)  # 10s, 20s, 40s
+                        print(f" Rate limit (attempt {attempt+1}), waiting {wait}s...")
+                        time.sleep(wait)
+                        continue
+                    else:
+                        raise RuntimeError("Rate limit exceeded after retries")
+                
+                if response.status_code != 200:
+                    raise RuntimeError(f"API error {response.status_code}: {response.text}")
+                
+                # Parse response
+                data = response.json()
+                text = data["choices"][0]["message"]["content"].strip()
+                
+                # Clean markdown
+                if text.startswith("```json"):
+                    text = text[7:]
+                elif text.startswith("```"):
+                    text = text[3:]
+                if text.endswith("```"):
+                    text = text[:-3]
+                text = text.strip()
+                
+                # Try to parse as JSON
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    # Return as string if not JSON
+                    return text
+                    
+            except Exception as e:
+                print(f" API error: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(3)
+                    continue
+                else:
+                    raise
 
-    def _extract_text(self, response) -> str:
-        """Safely extract text from OpenRouter response."""
-        try:
-            return response.choices[0].message.content or ""
-        except Exception:
-            return ""
-
-    def generate_content(
-        self,
-        prompt: str,
-        image=None,
-        max_tokens: int = 1024,
-        temperature: float = 0.2,
-    ) -> ProviderResponse:
-        messages = self._build_messages(prompt, image)
-
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-            return ProviderResponse(self._extract_text(response))
-
-        except Exception as e:
-            return ProviderResponse(
-                f"MOCK_RESPONSE: OpenRouter Gemini call failed: {e}"
-            )
+        raise RuntimeError("Failed after all retries")
