@@ -7,23 +7,21 @@ import config
 
 
 class ADBInterface:
-    """Manages ADB commands for Android device control"""
+    """Manages ADB (Android Debug Bridge) commands for Android device control"""
     
     def __init__(self, device_id: Optional[str] = None):
         """
         Initialize ADB interface
         
         Args:
-            device_id: Specific device ID (e.g., "emulator-5554") 
+            device_id: Specific device ID 
         """
         self.device_id = device_id 
         self._screen_size_cache = None
         
-        # Verify ADB is available
         if not self._check_adb():
             raise RuntimeError("ADB not found in PATH")
         
-        # Verify device is connected
         if not self._check_device():
             raise RuntimeError(f"Device not found: {self.device_id or 'any'}")
     
@@ -84,14 +82,14 @@ class ADBInterface:
         Returns:
             Tuple of (width, height) in pixels
         """
-        # Use cached value if available
+      
         if config.CACHE_SCREEN_SIZE and self._screen_size_cache:
             return self._screen_size_cache
         
         result = self._run(['shell', 'wm', 'size'])
         if result and result.returncode == 0:
             try:
-                # Parse "Physical size: 1080x2400"
+               
                 size_str = result.stdout.strip().split(': ')[-1]
                 width, height = map(int, size_str.split('x'))
                 

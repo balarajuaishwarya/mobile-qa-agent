@@ -27,9 +27,9 @@ class ExecutorAgent:
                 y_norm = params.get("y")
                 
                 if x_norm is not None and y_norm is not None:
-                    # SCALE THE COORDINATES HERE
+                   
                     real_x, real_y = self._scale_coords(x_norm, y_norm)
-                    print(f"   📍 Scaling: ({x_norm}, {y_norm}) -> Pixel: ({real_x}, {real_y})")
+                    print(f"  Scaling: ({x_norm}, {y_norm}) -> Pixel: ({real_x}, {real_y})")
                     self.adb.tap(real_x, real_y)
                 else:
                     raise ValueError("Missing x or y for tap")
@@ -72,7 +72,7 @@ class ExecutorAgent:
                 "error": str(e)
             }
 
-    # Backwards-compatible alias used by older callers
+
     def execute_action(self, action):
         """Compatibility wrapper for execute() used by TestRunner"""
         return self.execute(action)

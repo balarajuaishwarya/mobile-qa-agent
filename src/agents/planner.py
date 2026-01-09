@@ -1,13 +1,3 @@
-"""
-Planner Agent - Decides next action based on goal and current state
-
-Role: Strategic decision-making for test execution
-- Analyzes UI state from vision system
-- Reviews execution history
-- Plans single next action
-- Provides reasoning for decisions
-"""
-
 import json
 from typing import Dict, List
 import config
@@ -113,19 +103,16 @@ Based on the above, provide the next action as valid JSON.
 """
         
         try:
-            # Get AI response
             response = self.ai.generate_response(prompt)
-            
-            # Validate and clean response
             action = self._validate_action(response)
             
             if config.VERBOSE_OUTPUT:
-                print(f"   💭 Planner: {action.get('action_type')} - {action.get('reasoning', '')[:60]}...")
+                print(f"  Planner: {action.get('action_type')} - {action.get('reasoning', '')[:60]}...")
             
             return action
             
         except Exception as e:
-            print(f"⚠️  Planner error: {e}")
+            print(f"  Planner error: {e}")
             return {
                 "action_type": "wait",
                 "parameters": {"seconds": 2},
@@ -172,7 +159,7 @@ Based on the above, provide the next action as valid JSON.
             try:
                 response = json.loads(self._clean_json(response))
             except json.JSONDecodeError:
-                print(f"⚠️  Invalid JSON from planner: {response[:100]}")
+                print(f"  Invalid JSON from planner: {response[:100]}")
                 return self._fallback_action("JSON parse error")
         
         # Ensure dict
@@ -193,7 +180,7 @@ Based on the above, provide the next action as valid JSON.
         # Validate action type
         valid_types = ["tap", "type", "press_key", "swipe", "wait", "complete"]
         if action["action_type"] not in valid_types:
-            print(f"⚠️  Invalid action type: {action['action_type']}")
+            print(f"  Invalid action type: {action['action_type']}")
             return self._fallback_action(f"Unknown action: {action['action_type']}")
         
         # Validate parameters

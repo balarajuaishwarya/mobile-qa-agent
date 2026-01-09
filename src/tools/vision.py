@@ -52,7 +52,7 @@ CRITICAL RULES:
 3. Use descriptive text for icons (e.g., "gear icon" not just "icon")
 4. Set blocking_screen=true ONLY for: loading screens, error popups, permission requests
 5. Coordinates must be integers 0-1000
-6. Be precise with element positions
+6. Be precise with element positions as it is the core of the entire automation testing.
 
 EXAMPLES:
 - App icon in middle: {"text": "Obsidian", "type": "button", "x": 500, "y": 400}
@@ -86,7 +86,6 @@ EXAMPLES:
         try:
             self.analysis_count += 1
             
-            # Call AI with vision prompt
             response = self.ai.generate_response(self.SYSTEM_PROMPT, image)
             
             # Validate and clean response

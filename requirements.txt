@@ -1,3 +1,6 @@
-openai>=1.0.0
-pillow>=10.0.0
-python-dotenv>=1.0.0
+google-generativeai>=0.4.0  
+requests>=2.31.0            
+Pillow>=10.0.0
+python-dotenv>=1.0.0  # For .env file management
+langraph>=0.3.0
+openai>=0.27.0  

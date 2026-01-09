@@ -33,7 +33,7 @@ class TestRunner:
     def __init__(self):
         """Initialize all components"""
         print("\n" + "="*70)
-        print("🚀 MOBILE QA MULTI-AGENT SYSTEM")
+        print(" MOBILE QA MULTI-AGENT SYSTEM")
         print("="*70 + "\n")
         
         # Initialize components
@@ -77,14 +77,14 @@ class TestRunner:
         max_steps = test_case.get("max_steps", config.MAX_STEPS_PER_TEST)
         
         print("\n" + "="*70)
-        print(f"🧪 TEST: {test_name}")
+        print(f" TEST: {test_name}")
         print("="*70)
         print(f"Goal: {goal}")
         print(f"Max Steps: {max_steps}")
         print("="*70 + "\n")
         
         # Launch app
-        print("📱 Launching Obsidian...")
+        print(" Launching Obsidian...")
         self.adb.wake_device()  # Ensure screen is on
         self.adb.launch_app(config.OBSIDIAN_PACKAGE)
         
@@ -95,13 +95,13 @@ class TestRunner:
         # Main execution loop
         for step in range(1, max_steps + 1):
             print(f"\n{'─'*70}")
-            print(f"📍 STEP {step}/{max_steps}")
+            print(f" STEP {step}/{max_steps}")
             print(f"{'─'*70}")
             
             # 1. Capture current state
             screenshot = self.adb.get_screenshot()
             if screenshot is None:
-                print("❌ Screenshot failed, aborting test")
+                print(" Screenshot failed, aborting test")
                 break
             
             # Save screenshot
@@ -110,7 +110,7 @@ class TestRunner:
                 screenshot.save(screenshot_path)
             
             # 2. Analyze UI
-            print("👁️  Analyzing screen...")
+            print("  Analyzing screen...")
             vision_analysis = self.vision.analyze_screen(screenshot)
             ui_context = self.vision.format_for_planner(vision_analysis)
             
@@ -119,10 +119,10 @@ class TestRunner:
             
             # Check for blocking screens
             if vision_analysis.get("blocking_screen"):
-                print("⚠️  Blocking screen detected (popup/loading)")
+                print("  Blocking screen detected (popup/loading)")
             
             # 3. Plan next action
-            print("🧠 Planning next action...")
+            print(" Planning next action...")
             action = self.planner.plan_next_action(goal, ui_context, execution_history)
             
             # Check if complete
@@ -146,7 +146,7 @@ class TestRunner:
             
             # 6. Quick supervisor check (optional)
             if result["status"] == "failed":
-                print(f"⚠️  Execution failed: {result.get('message', 'Unknown error')}")
+                print(f"  Execution failed: {result.get('message', 'Unknown error')}")
                 # Could add smart retry logic here
             
             # Brief pause between steps
@@ -188,7 +188,7 @@ class TestRunner:
         self._print_test_result(test_result)
         
         # Return to home
-        print("\n🏠 Returning to home screen...")
+        print("\n Returning to home screen...")
         self.adb.press_key("home")
         time.sleep(config.TEST_DELAY)
         
@@ -205,7 +205,7 @@ class TestRunner:
             List of test results
         """
         print("\n" + "="*70)
-        print("📋 TEST SUITE EXECUTION")
+        print(" TEST SUITE EXECUTION")
         print("="*70)
         print(f"Total Tests: {len(test_cases)}")
         print("="*70 + "\n")
@@ -238,9 +238,9 @@ class TestRunner:
         print("\n" + "="*70)
         
         if result["result"] == "PASS":
-            print("✅ TEST PASSED")
+            print(" TEST PASSED")
         else:
-            print("❌ TEST FAILED")
+            print(" TEST FAILED")
         
         print("="*70)
         print(f"Test: {result['test_name']}")
@@ -254,7 +254,7 @@ class TestRunner:
     def _print_suite_summary(self, results: List[Dict]):
         """Pretty print test suite summary"""
         print("\n\n" + "="*70)
-        print("📊 TEST SUITE SUMMARY")
+        print(" TEST SUITE SUMMARY")
         print("="*70 + "\n")
         
         passed = sum(1 for r in results if r["result"] == "PASS")
@@ -265,11 +265,11 @@ class TestRunner:
         total_steps = sum(r["steps_executed"] for r in results)
         
         print(f"Total Tests:    {len(results)}")
-        print(f"✅ Passed:      {passed}")
-        print(f"❌ Failed:      {failed}")
-        print(f"🐛 Bugs Found:  {bugs_found}")
-        print(f"\n⏱️  Total Time:  {total_time:.1f}s")
-        print(f"📍 Total Steps:  {total_steps}")
+        print(f" Passed:      {passed}")
+        print(f" Failed:      {failed}")
+        print(f" Bugs Found:  {bugs_found}")
+        print(f"\n Total Time:  {total_time:.1f}s")
+        print(f" Total Steps:  {total_steps}")
         
         print("\nDetailed Results:")
         print("-" * 70)
@@ -296,7 +296,7 @@ class TestRunner:
         with open(results_file, 'w') as f:
             json.dump(results, f, indent=2)
         
-        print(f"💾 Results saved: {results_file}\n")
+        print(f" Results saved: {results_file}\n")
 
 
 def main():
@@ -319,11 +319,11 @@ def main():
         return exit_code
         
     except KeyboardInterrupt:
-        print("\n\n⚠️  Test interrupted by user")
+        print("\n\n  Test interrupted by user")
         return 130
     
     except Exception as e:
-        print(f"\n\n❌ Critical error: {e}")
+        print(f"\n\n Critical error: {e}")
         import traceback
         traceback.print_exc()
         return 1

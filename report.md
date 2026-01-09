@@ -6,7 +6,6 @@
 After evaluating multiple agentic frameworks for mobile QA automation, I chose to implement a **custom multi-agent orchestration system** using **Google's Gemini 2.0 Flash with Vision API** rather than using pre-built frameworks like Agent S or Google ADK.
 
 ---
-
 ## Framework Options Evaluated
 
 ### 1. **Simular's Agent S**
@@ -22,21 +21,25 @@ After evaluating multiple agentic frameworks for mobile QA automation, I chose t
 ### 3. **LangGraph**
 - **Pros**: Excellent for multi-agent workflows, state management, clear graph-based architecture
 - **Cons**: Requires additional dependencies, adds complexity to simple coordination
-- **Verdict**: Strong candidate but adds overhead for straightforward sequential flow
+- **Verdict**: Very Strong candidate but adds overhead for straightforward sequential flow
 
 ### 4. **Custom Implementation with Gemini Vision API (SELECTED)**
 - **Pros**: 
   - Direct control over agent behavior and prompts
   - Minimal dependencies (just google-generativeai)
-  - Gemini 2.0 Flash is free and excellent for vision tasks
+  - Gemini 2.0 Flash is free and excellent for vision tasks, although rate limited on free tier
   - Easy to debug and modify
   - Perfect for the supervisor-planner-executor pattern
 - **Cons**: 
   - No built-in state management (handled manually)
   - No automatic retries or error handling (implemented custom)
-- **Verdict**: Best fit for this project
+- **Verdict**: Best fit for this project as of now
 
----
+State Management Control: While LangGraph offers built-in state, for a 3-agent mobile system, "state" is mostly the current screenshot, the task history, and the next planned coordinate. Managing this in a simple Python dictionary or a TypedDict is often cleaner than learning the "StateGraph" syntax.
+
+Latency & Overhead: Mobile automation is already slow (ADB + Screenshot + AI Processing). Adding a heavy framework layer can add 500ms–1s of overhead per turn. Direct call to Gemini 2.0 Flash minimizes this "framework tax."
+
+Vision Precision: Gemini 2.0 Flash has significantly improved Spatial Understanding. By writing our own prompts, we can tune the model specifically to recognize mobile UI patterns (like the difference between a "hamburger menu" and a "back button") better than a generic framework might.
 
 ## Decision Rationale
 
@@ -55,7 +58,9 @@ After evaluating multiple agentic frameworks for mobile QA automation, I chose t
    - `adb.py`: Android device control
    - `vision.py`: Vision API wrappers
    - Agent classes: Pure business logic
-   - `main.py`: Orchestration
+   - `main.py`: Orchestration - Custom
+   - `app.py`: Also implemented the lanGraph flow as it is a next strong candidate in case we really decide to use an Agentic framework.
+   - `ai_provider.py`: This will allow us to easily switch the models.
 
 5. **Easy Model Swapping**: The architecture allows easy replacement of Gemini with Claude, GPT-4V, or any other vision model by changing a single configuration.
 
@@ -83,8 +88,7 @@ After evaluating multiple agentic frameworks for mobile QA automation, I chose t
 ## Key Technical Decisions
 
 ### 1. **Coordinate System: Percentage-Based**
-- Planner outputs coordinates as percentages (0-100%)
-- Executor converts to actual pixels based on device resolution
+- Planner outputs coordinates
 - Handles different screen sizes automatically
 
 ### 2. **Action Types**
@@ -99,46 +103,6 @@ After evaluating multiple agentic frameworks for mobile QA automation, I chose t
 - Distinguish "technical failure" (couldn't click) from "test failure" (element missing)
 - Supervisor makes final determination based on context
 - All actions logged with screenshots for debugging
-# Framework Decision Memo
-
-## Selected Approach: Custom Multi-Agent System with a provider-agnostic Vision layer
-
-### Executive Summary
-Implemented a custom multi-agent orchestration system tailored for mobile QA automation. The implementation uses a small AI provider abstraction (`AIProviderManager`) so the system can work with any model i.e can be switched to other providers later. 
-
----
-
-## Action Types
-
-- tap: click at percentage coordinates
-- type: input text
-- press_key: system keys (back, home, enter)
-- swipe: gestures with start/end percentages
-- wait: pause for N seconds
-- complete: end the test
-
----
-
-## Error Handling & Verification
-
-- Execution errors (ADB failures) are distinguished from test failures (element missing). Supervisor makes the final judgment.
-- Visual verification (text, element, color) is performed by VisionTools via the provider.
-
----
-
-## Trade-offs
-
-- Pros: simple, debuggable, minimal dependencies, easy to swap models/providers.
-- Cons: sequential only (no built-in parallelism), manual state management, and prompt engineering done by hand.
-
----
-
-## Dependencies & LOC
-
-- Dependencies: `openai`, `pillow`, `python-dotenv` (plus standard testing/dev tools)
-- Total LOC: ~800 (approx)
-
----
 
 ## Conclusion
 

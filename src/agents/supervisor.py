@@ -1,13 +1,3 @@
-"""
-Supervisor Agent - Verifies test execution and determines pass/fail
-
-Role: Quality assurance and final verdict
-- Monitors execution progress
-- Distinguishes execution failures from test assertion failures
-- Makes final PASS/FAIL determination
-- Provides detailed reasoning
-"""
-
 import json
 from typing import Dict, List, Optional
 from PIL import Image
@@ -96,10 +86,8 @@ Be thorough but concise in your reasoning.
         if final_screenshot is None:
             return self._error_verdict("No final screenshot available")
         
-        # Format history for AI
         history_summary = self._format_history(execution_history)
-        
-        # Build evaluation prompt
+
         prompt = f"""{self.EVALUATION_PROMPT}
 
 TEST GOAL:
@@ -112,27 +100,21 @@ Examine the final screenshot and provide your verdict as JSON.
 """
         
         try:
-            # Get AI evaluation
             response = self.ai.generate_response(prompt, final_screenshot)
-            
-            # Validate and normalize response
             verdict = self._validate_verdict(response)
             
             if config.VERBOSE_OUTPUT:
-                result_emoji = "✓" if verdict["result"] == "PASS" else "✗"
-                print(f"\n   {result_emoji} Supervisor: {verdict['result']} - {verdict['reason'][:70]}...")
+                print(f"\n Supervisor: {verdict['result']} - {verdict['reason'][:70]}...")
             
             return verdict
             
         except Exception as e:
-            print(f"⚠️  Supervisor error: {e}")
+            print(f" Supervisor error: {e}")
             return self._error_verdict(f"Evaluation error: {str(e)}")
     
     def verify_step(
         self,
-        action: Dict,
         execution_result: Dict,
-        screenshot: Optional[Image.Image]
     ) -> Dict:
         """
         Quick verification after each step (optional, for continuous monitoring)
